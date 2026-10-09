@@ -141,8 +141,8 @@ export default function VehicleExitModal({
   const [processing, setProcessing] = useState(false);
 
   // Receiving UPI Account Configuration (Persisted in localStorage)
-  const [upiId, setUpiId] = useState(() => localStorage.getItem('parking_upi_id') || 'arvilightss@okaxis');
-  const [payeeName, setPayeeName] = useState(() => localStorage.getItem('parking_payee_name') || 'Santheesh S');
+  const [upiId, setUpiId] = useState(() => localStorage.getItem('parking_upi_id') || 'santheesh24@okaxis');
+  const [payeeName, setPayeeName] = useState(() => localStorage.getItem('parking_payee_name') || 'SANTHEESH');
   const [showUpiConfig, setShowUpiConfig] = useState(false);
   const [tempUpiId, setTempUpiId] = useState(upiId);
   const [tempPayeeName, setTempPayeeName] = useState(payeeName);
@@ -203,11 +203,14 @@ export default function VehicleExitModal({
   if (!isOpen) return null;
 
   const totalAmount = fareData?.totalAmount || 20.0;
+  const cleanUpiId = (upiId || 'santheesh24@okaxis').trim();
+  const cleanName = (payeeName || 'SANTHEESH').trim().replace(/[^a-zA-Z0-9 ]/g, '');
+  const cleanAmount = Number(totalAmount).toFixed(2);
 
-  // Standard NPCI UPI URI Scheme
-  const upiUrl = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(
-    payeeName
-  )}&am=${totalAmount.toFixed(2)}&cu=INR&tn=Parking_${encodeURIComponent(regNumber || 'Fare')}`;
+  // Standard NPCI UPI URI Specification:
+  // Note: 'pa' MUST contain literal '@' symbol. Do NOT encode '@' into '%40',
+  // otherwise NPCI directory lookup fails with 'Could not load banking name'.
+  const upiUrl = `upi://pay?pa=${cleanUpiId}&pn=${encodeURIComponent(cleanName)}&am=${cleanAmount}&cu=INR&tn=ParkingFare`;
 
   const handleCopyUpi = () => {
     navigator.clipboard?.writeText(upiId);

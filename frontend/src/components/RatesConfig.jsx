@@ -189,8 +189,8 @@ export default function RatesConfig({ rates, onRatesUpdated, onShowAlert }) {
               type="text"
               name="upiId"
               className="form-control"
-              defaultValue={localStorage.getItem('parking_upi_id') || 'arvilightss@okaxis'}
-              placeholder="e.g. arvilightss@okaxis"
+              defaultValue={localStorage.getItem('parking_upi_id') || 'santheesh24@okaxis'}
+              placeholder="e.g. santheesh24@okaxis"
               required
             />
           </div>
@@ -200,8 +200,8 @@ export default function RatesConfig({ rates, onRatesUpdated, onShowAlert }) {
               type="text"
               name="payeeName"
               className="form-control"
-              defaultValue={localStorage.getItem('parking_payee_name') || 'Santheesh S'}
-              placeholder="e.g. Santheesh S"
+              defaultValue={localStorage.getItem('parking_payee_name') || 'SANTHEESH'}
+              placeholder="e.g. SANTHEESH"
             />
           </div>
           <button type="submit" className="btn btn-primary" style={{ height: '38px' }}>
