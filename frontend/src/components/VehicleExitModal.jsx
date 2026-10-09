@@ -386,7 +386,7 @@ export default function VehicleExitModal({
               <div className="upi-checkout-layout">
                 {/* QR Code Frame */}
                 <div className="qr-code-frame">
-                  <ScannableQrCode upiUrl={upiUrl} size={170} />
+                  <ScannableQrCode upiUrl={upiUrl} size={145} />
                   <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1e3a8a', marginTop: '10px' }}>
                     Scan with Any UPI App
                   </div>
