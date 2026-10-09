@@ -1,0 +1,44 @@
+# Compiled class files & build directories
+target/
+*.class
+
+# Package files
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Node / React Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.pnp
+frontend/.pnp.js
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# IntelliJ IDEA & Eclipse
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+
+# Visual Studio Code
+.vscode/
+
+# Maven Wrapper binaries (optional to ignore jar, keep wrapper scripts)
+.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
