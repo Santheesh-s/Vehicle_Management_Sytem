@@ -42,3 +42,9 @@ ehthumbs.db
 # Maven Wrapper binaries (optional to ignore jar, keep wrapper scripts)
 .mvn/wrapper/maven-wrapper.jar
 .mvn/timing.properties
+
+# Local secret properties and run scripts (NEVER push to GitHub)
+run-local.cmd
+.env
+application-local.properties
+**/application-local.properties
