@@ -45,6 +45,7 @@ ehthumbs.db
 
 # Local secret properties and run scripts (NEVER push to GitHub)
 run-local.cmd
+run-local.ps1
 .env
 application-local.properties
 **/application-local.properties
