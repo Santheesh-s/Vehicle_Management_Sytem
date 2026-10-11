@@ -64,11 +64,39 @@ export default function EntryTicketModal({ ticketData, onClose }) {
             </div>
 
             <div className="ticket-row">
+              <span className="ticket-label">Mobile Contact:</span>
+              <span className="ticket-val">{ticketData.vehicle.ownerPhone || 'N/A'}</span>
+            </div>
+
+            <div className="ticket-row">
+              <span className="ticket-label">Driver Email:</span>
+              <span className="ticket-val">{ticketData.vehicle.ownerEmail || 'N/A'}</span>
+            </div>
+
+            <div className="ticket-row">
               <span className="ticket-label">Check-in Time:</span>
               <span className="ticket-val">
                 {new Date(ticketData.entryTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
               </span>
             </div>
+
+            {ticketData.vehicle.ownerEmail && (
+              <div
+                style={{
+                  margin: '12px 0 6px',
+                  padding: '8px 10px',
+                  background: '#eff6ff',
+                  border: '1px solid #bfdbfe',
+                  borderRadius: '6px',
+                  fontSize: '0.78rem',
+                  color: '#1e40af',
+                  textAlign: 'center',
+                }}
+              >
+                <i className="fa-solid fa-envelope-circle-check" style={{ marginRight: '6px' }}></i>
+                Check-in details emailed to <strong>{ticketData.vehicle.ownerEmail}</strong>
+              </div>
+            )}
 
             <div className="barcode-sim">
               ||||| | |||| ||| ||||||| |

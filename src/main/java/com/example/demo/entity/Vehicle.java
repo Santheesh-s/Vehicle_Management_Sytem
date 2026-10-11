@@ -27,4 +27,6 @@ public class Vehicle {
     private String ownerName;
 
     private String ownerPhone;
+
+    private String ownerEmail;
 }

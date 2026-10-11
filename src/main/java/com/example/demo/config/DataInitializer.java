@@ -95,7 +95,7 @@ public class DataInitializer implements CommandLineRunner {
 
             if (slotA01 != null && slotA02 != null) {
                 // Active vehicle 1
-                Vehicle v1 = vehicleRepository.save(new Vehicle(null, "TN 49 AS 6179", VehicleType.TWO_WHEELER, "SANTHEESH S", "7012050137"));
+                Vehicle v1 = vehicleRepository.save(new Vehicle(null, "TN 49 AS 6179", VehicleType.TWO_WHEELER, "SANTHEESH S", "7012050137", "santheesh24@gmail.com"));
                 slotA01.setStatus(SlotStatus.OCCUPIED);
                 parkingSlotRepository.save(slotA01);
                 ParkingRecord r1 = new ParkingRecord();
@@ -106,7 +106,7 @@ public class DataInitializer implements CommandLineRunner {
                 parkingRecordRepository.save(r1);
 
                 // Active vehicle 2
-                Vehicle v2 = vehicleRepository.save(new Vehicle(null, "TN02AF1456", VehicleType.TWO_WHEELER, "thikish", "1234567890"));
+                Vehicle v2 = vehicleRepository.save(new Vehicle(null, "TN02AF1456", VehicleType.TWO_WHEELER, "thikish", "1234567890", "thikish@example.com"));
                 slotA02.setStatus(SlotStatus.OCCUPIED);
                 parkingSlotRepository.save(slotA02);
                 ParkingRecord r2 = new ParkingRecord();
@@ -118,7 +118,7 @@ public class DataInitializer implements CommandLineRunner {
 
                 // Sample Exited vehicle (history)
                 if (slotA03 != null) {
-                    Vehicle v3 = vehicleRepository.save(new Vehicle(null, "TN 49 AC 6158", VehicleType.TWO_WHEELER, "SANTHEESH S", "7012050137"));
+                    Vehicle v3 = vehicleRepository.save(new Vehicle(null, "TN 49 AC 6158", VehicleType.TWO_WHEELER, "SANTHEESH S", "7012050137", "santheesh24@gmail.com"));
                     ParkingRecord r3 = new ParkingRecord();
                     r3.setVehicle(v3);
                     r3.setParkingSlot(slotA03);

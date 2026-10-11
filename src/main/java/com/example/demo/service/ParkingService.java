@@ -81,12 +81,14 @@ public class ParkingService {
             newVehicle.setVehicleType(request.getVehicleType());
             newVehicle.setOwnerName(request.getOwnerName());
             newVehicle.setOwnerPhone(request.getOwnerPhone());
+            newVehicle.setOwnerEmail(request.getOwnerEmail());
             return vehicleRepository.save(newVehicle);
         });
 
         // Update owner details if provided
         if (request.getOwnerName() != null) vehicle.setOwnerName(request.getOwnerName());
         if (request.getOwnerPhone() != null) vehicle.setOwnerPhone(request.getOwnerPhone());
+        if (request.getOwnerEmail() != null) vehicle.setOwnerEmail(request.getOwnerEmail());
         vehicleRepository.save(vehicle);
 
         // Mark slot as occupied
@@ -102,10 +104,44 @@ public class ParkingService {
 
         ParkingRecord savedRecord = parkingRecordRepository.save(record);
 
-        // Optional: Dispatch SMS ticket notification if phone number provided
-        if (request.getOwnerPhone() != null && !request.getOwnerPhone().isBlank()) {
-            notificationService.sendSms(request.getOwnerPhone(), 
-                "ParkSys: Vehicle " + regNum + " check-in confirmed at bay " + slot.getSlotNumber() + ". Ticket #" + savedRecord.getId());
+        // Dispatch Email confirmation when vehicle is parked (No SMS)
+        String driverEmail = vehicle.getOwnerEmail();
+        if (driverEmail != null && !driverEmail.isBlank()) {
+            java.time.format.DateTimeFormatter dtf = java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy hh:mm a");
+            String formattedEntry = savedRecord.getEntryTime() != null ? savedRecord.getEntryTime().format(dtf) : "Now";
+            String driverName = (vehicle.getOwnerName() != null && !vehicle.getOwnerName().isBlank()) ? vehicle.getOwnerName() : "Driver";
+            String driverPhone = (vehicle.getOwnerPhone() != null && !vehicle.getOwnerPhone().isBlank()) ? vehicle.getOwnerPhone() : "Not Provided";
+
+            String subject = "🅿️ Vehicle Parked Confirmation - " + regNum + " [Bay " + slot.getSlotNumber() + "]";
+            String emailBody = String.format("""
+                Dear %s,
+
+                Your vehicle (%s) has been successfully checked in and parked at our facility.
+
+                PARKING DETAILS:
+                ============================================================
+                Registration Number : %s
+                Vehicle Category    : %s
+                Allocated Bay / Slot: %s
+                Check-In Timestamp  : %s
+                Ticket ID Reference : #%d
+                Registered Mobile   : %s
+                ============================================================
+
+                Please retain your Ticket ID / Registration Number for checkout at the exit gate.
+
+                Thank you for parking with us!
+                """,
+                driverName,
+                regNum,
+                regNum,
+                request.getVehicleType(),
+                slot.getSlotNumber(),
+                formattedEntry,
+                savedRecord.getId(),
+                driverPhone
+            );
+            notificationService.sendEmail(driverEmail.trim(), subject, emailBody);
         }
 
         return ApiResponse.ok("Vehicle entered successfully and assigned to slot " + slot.getSlotNumber(), savedRecord);
@@ -167,10 +203,52 @@ public class ParkingService {
 
         ParkingRecord updatedRecord = parkingRecordRepository.save(record);
 
-        // Dispatch optional exit SMS confirmation
-        if (record.getVehicle() != null && record.getVehicle().getOwnerPhone() != null && !record.getVehicle().getOwnerPhone().isBlank()) {
-            notificationService.sendSms(record.getVehicle().getOwnerPhone(), 
-                "ParkSys: Settlement completed for " + regNum + ". Amount Paid: ₹" + totalAmount + " (" + record.getPaymentMethod() + ", Ref: " + txnId + "). Exit gate opened!");
+        // Dispatch Email receipt when vehicle exits with amount (No SMS)
+        if (record.getVehicle() != null && record.getVehicle().getOwnerEmail() != null && !record.getVehicle().getOwnerEmail().isBlank()) {
+            String driverEmail = record.getVehicle().getOwnerEmail().trim();
+            java.time.format.DateTimeFormatter dtf = java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy hh:mm a");
+            String formattedEntry = record.getEntryTime() != null ? record.getEntryTime().format(dtf) : "N/A";
+            String formattedExit = record.getExitTime() != null ? record.getExitTime().format(dtf) : "N/A";
+            String driverName = (record.getVehicle().getOwnerName() != null && !record.getVehicle().getOwnerName().isBlank()) 
+                    ? record.getVehicle().getOwnerName() : "Driver";
+
+            String subject = String.format("🚗 Vehicle Exited - Settlement Receipt: %s (Amount: ₹%.2f)", regNum, totalAmount);
+            String emailBody = String.format("""
+                Dear %s,
+
+                Your vehicle (%s) has successfully checked out and exited from our parking facility.
+
+                EXIT & SETTLEMENT RECEIPT:
+                ============================================================
+                Registration Number : %s
+                Vehicle Category    : %s
+                Parking Bay / Slot  : %s
+                Check-In Timestamp  : %s
+                Check-Out Timestamp : %s
+                Total Duration      : %d mins (%d billable hr(s))
+                ============================================================
+                TOTAL AMOUNT PAID   : ₹%.2f
+                Payment Method      : %s
+                Transaction ID      : %s
+                Exit Barrier Status : CLEARED & OPENED
+                ============================================================
+
+                Thank you for choosing our parking facility. Have a safe journey!
+                """,
+                driverName,
+                regNum,
+                regNum,
+                record.getVehicle().getVehicleType(),
+                record.getParkingSlot() != null ? record.getParkingSlot().getSlotNumber() : "--",
+                formattedEntry,
+                formattedExit,
+                record.getDurationMinutes() != null ? record.getDurationMinutes() : 0,
+                billableHours,
+                totalAmount,
+                record.getPaymentMethod(),
+                txnId
+            );
+            notificationService.sendEmail(driverEmail, subject, emailBody);
         }
 
         return ApiResponse.ok("Vehicle exited successfully. Total amount: ₹" + totalAmount, updatedRecord);
@@ -217,6 +295,7 @@ public class ParkingService {
         fareData.put("totalAmount", totalAmount);
         fareData.put("ownerName", record.getVehicle().getOwnerName());
         fareData.put("ownerPhone", record.getVehicle().getOwnerPhone());
+        fareData.put("ownerEmail", record.getVehicle().getOwnerEmail());
 
         return ApiResponse.ok("Fare calculated successfully", fareData);
     }

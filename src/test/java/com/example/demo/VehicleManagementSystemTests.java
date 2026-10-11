@@ -135,11 +135,13 @@ class VehicleManagementSystemTests {
                                     "regNumber": "%s",
                                     "vehicleType": "TWO_WHEELER",
                                     "ownerName": "Alex",
-                                    "ownerPhone": "9876543299"
+                                    "ownerPhone": "9876543299",
+                                    "ownerEmail": "alex.driver@test.com"
                                 }
                                 """, testReg)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.vehicle.ownerEmail").value("alex.driver@test.com"))
                 .andExpect(jsonPath("$.data.parkingSlot.status").value("OCCUPIED"));
 
         // 9. GET /api/parking/vehicles

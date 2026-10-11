@@ -223,6 +223,11 @@ export default function DashboardStats({
                           {record.vehicle.ownerPhone}
                         </div>
                       )}
+                      {record.vehicle.ownerEmail && (
+                        <div style={{ fontSize: '0.74rem', color: 'var(--primary)' }}>
+                          {record.vehicle.ownerEmail}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '16px 18px' }}>
                       <span style={{ fontSize: '0.86rem', color: 'var(--text-main)' }}>

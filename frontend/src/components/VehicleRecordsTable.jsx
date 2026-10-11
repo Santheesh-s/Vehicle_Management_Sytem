@@ -21,7 +21,8 @@ export default function VehicleRecordsTable({ records, onOpenExit }) {
     const matchesSearch =
       !q ||
       r.vehicle.regNumber.toLowerCase().includes(q) ||
-      (r.vehicle.ownerName && r.vehicle.ownerName.toLowerCase().includes(q));
+      (r.vehicle.ownerName && r.vehicle.ownerName.toLowerCase().includes(q)) ||
+      (r.vehicle.ownerEmail && r.vehicle.ownerEmail.toLowerCase().includes(q));
 
     return matchesStatus && matchesSearch;
   });
@@ -55,10 +56,10 @@ export default function VehicleRecordsTable({ records, onOpenExit }) {
           <input
             type="text"
             className="form-control"
-            placeholder="Search Plate or Owner..."
+            placeholder="Search Plate, Owner or Email..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ width: '220px', fontSize: '0.85rem' }}
+            style={{ width: '240px', fontSize: '0.85rem' }}
           />
         </div>
       </div>
@@ -96,7 +97,10 @@ export default function VehicleRecordsTable({ records, onOpenExit }) {
                       </td>
                       <td>
                         <div style={{ fontWeight: 600 }}>{r.vehicle.ownerName || '-'}</div>
-                        <small style={{ color: 'var(--text-muted)' }}>{r.vehicle.ownerPhone || ''}</small>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{r.vehicle.ownerPhone || ''}</div>
+                        {r.vehicle.ownerEmail && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--primary)' }}>{r.vehicle.ownerEmail}</div>
+                        )}
                       </td>
                       <td>
                         <span className="badge-tag gray">

@@ -40,25 +40,22 @@ public class NotificationService {
     }
 
     /**
-     * Sends an SMS notification (logged to system output without third-party charges).
+     * SMS service is disabled per system specification.
+     * All notifications are routed through the Email service.
      */
     public boolean sendSms(String toPhoneNumber, String messageBody) {
-        String cleanPhone = toPhoneNumber.replaceAll("[^0-9+]", "");
-        if (!cleanPhone.startsWith("+") && cleanPhone.length() == 10) {
-            cleanPhone = "+91" + cleanPhone;
-        }
-        System.out.println("[SMS NOTIFICATION] To: " + cleanPhone + " | Message: " + messageBody);
-        return true;
+        System.out.println("[SMS SERVICE DISABLED] Discarded SMS dispatch to: " + toPhoneNumber + " (System configured for Email service only)");
+        return false;
     }
 
     /**
-     * Intelligent dispatch: routes to Email or SMS based on the target format.
+     * Intelligent dispatch: routes exclusively to Email service.
      */
     public void notifyTarget(String target, String subject, String message) {
         if (target != null && target.contains("@")) {
             sendEmail(target, subject, message);
-        } else if (target != null && !target.isBlank()) {
-            sendSms(target, message);
+        } else {
+            System.out.println("[NOTIFICATION SKIPPED] Target '" + target + "' is not an email address. (SMS service disabled)");
         }
     }
 }

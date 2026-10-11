@@ -182,6 +182,16 @@ export default function VehicleExitModal({
                   <i className="fa-solid fa-calculator"></i> {fareData?.billableHours || 1} Billable Hr(s)
                 </span>
               </div>
+              {(fareData?.ownerEmail || fareData?.ownerPhone) && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  {fareData.ownerPhone && <span><i className="fa-solid fa-phone" style={{ marginRight: '4px' }}></i>{fareData.ownerPhone}</span>}
+                  {fareData.ownerEmail && (
+                    <span style={{ marginLeft: fareData.ownerPhone ? '10px' : '0', color: 'var(--primary)', fontWeight: 600 }}>
+                      <i className="fa-solid fa-envelope" style={{ marginRight: '4px' }}></i>{fareData.ownerEmail}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <div className="fare-total-badge">
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1e40af', textTransform: 'uppercase' }}>
@@ -214,19 +224,44 @@ export default function VehicleExitModal({
               <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#065f46', margin: '0 0 6px' }}>
                 GATE CLEARED &bull; VEHICLE CHECKED OUT
               </h2>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#047857', marginBottom: '6px' }}>
-                Fare: ₹{Number(exitPass.totalAmount || totalAmount).toFixed(2)}
+              <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#047857', marginBottom: '6px' }}>
+                Exited With Amount: ₹{Number(exitPass.totalAmount || totalAmount).toFixed(2)}
               </div>
               <div style={{ fontSize: '0.82rem', color: '#065f46', fontFamily: 'monospace' }}>
                 Pass ID: {exitPass.transactionId || 'EXIT-DONE'}
               </div>
+
+              {(exitPass?.vehicle?.ownerEmail || fareData?.ownerEmail) && (
+                <div
+                  style={{
+                    margin: '12px auto',
+                    maxWidth: '420px',
+                    padding: '8px 12px',
+                    background: '#ecfdf5',
+                    border: '1px solid #a7f3d0',
+                    borderRadius: '8px',
+                    fontSize: '0.82rem',
+                    color: '#065f46',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <i className="fa-solid fa-envelope-circle-check" style={{ fontSize: '1.1rem', color: '#059669' }}></i>
+                  <span>
+                    Exit invoice of <strong>₹{Number(exitPass.totalAmount || totalAmount).toFixed(2)}</strong> dispatched to{' '}
+                    <strong>{exitPass?.vehicle?.ownerEmail || fareData?.ownerEmail}</strong>
+                  </span>
+                </div>
+              )}
 
               <div className="gate-barrier-banner" style={{ marginTop: '14px' }}>
                 <i className="fa-solid fa-road-barrier"></i>
                 <span>EXIT BARRIER OPENED &bull; BAY RELEASED</span>
               </div>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: 0 }}>
-                Vehicle <strong>{regNumber}</strong> is authorized to leave. Have a safe journey!
+                Vehicle <strong>{regNumber}</strong> has exited successfully. Safe journey!
               </p>
             </div>
           ) : (
