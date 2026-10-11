@@ -25,6 +25,21 @@ public class PaymentController {
         return paymentService.getPaymentConfig();
     }
 
+    @PostMapping("/create-upi-session")
+    public ApiResponse<Map<String, Object>> createUpiSession(@RequestBody PaymentOrderRequest request) {
+        return paymentService.createUpiSession(request);
+    }
+
+    @GetMapping("/upi-status")
+    public ApiResponse<Map<String, Object>> checkUpiStatus(@RequestParam String orderId) {
+        return paymentService.checkUpiStatus(orderId);
+    }
+
+    @PostMapping("/simulate-upi-payment")
+    public ApiResponse<Map<String, Object>> completeUpiPayment(@RequestParam String orderId) {
+        return paymentService.completeUpiPayment(orderId);
+    }
+
     @PostMapping("/create-order")
     public ApiResponse<Map<String, Object>> createOrder(@RequestBody PaymentOrderRequest request) {
         return paymentService.createOrder(request);

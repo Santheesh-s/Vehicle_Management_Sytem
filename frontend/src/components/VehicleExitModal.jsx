@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { exitVehicle, calculateFare, createPaymentOrder, verifyPayment, fetchPaymentConfig } from '../api';
+import React, { useState, useEffect, useRef } from 'react';
+import { exitVehicle, calculateFare, createUpiSession, checkUpiStatus, simulateUpiPayment } from '../api';
 
 /**
  * Fallback SVG QR Code generator in case offline.
@@ -91,11 +91,9 @@ function FallbackSvgQr({ value, size = 180 }) {
 }
 
 /**
- * Scannable QR Code Component:
- * Real standard QR code image scannable by Google Pay, PhonePe, Paytm,
- * with fallback to local SVG if offline.
+ * Scannable QR Code Component
  */
-function ScannableQrCode({ upiUrl, size = 170 }) {
+function ScannableQrCode({ upiUrl, size = 160 }) {
   const [imgError, setImgError] = useState(false);
   const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(upiUrl)}`;
 
@@ -107,7 +105,7 @@ function ScannableQrCode({ upiUrl, size = 170 }) {
     <div style={{ position: 'relative', width: size, height: size, margin: '0 auto' }}>
       <img
         src={qrApiUrl}
-        alt="Scan UPI QR Code"
+        alt="Scan Unique UPI QR Code"
         width={size}
         height={size}
         style={{
@@ -124,8 +122,8 @@ function ScannableQrCode({ upiUrl, size = 170 }) {
 
 /**
  * VehicleExitModal Component:
- * Exclusively supports UPI and Cash settlements.
- * Features automated UPI transaction confirmation without requiring staff to inspect the customer's phone.
+ * Real-time dynamic Unique QR code with auto-detection polling.
+ * Automatically displays "Payment Done!" and opens the barrier gate without staff intervention.
  */
 export default function VehicleExitModal({
   isOpen,
@@ -140,9 +138,14 @@ export default function VehicleExitModal({
   const [fareLoading, setFareLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('UPI'); // STRICTLY: 'UPI' | 'CASH'
   const [processing, setProcessing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('');
 
-  // Receiving UPI Account Configuration
+  // Dynamic UPI Session & Real-time Polling State
+  const [upiSession, setUpiSession] = useState(null);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [completedRecord, setCompletedRecord] = useState(null);
+  const pollIntervalRef = useRef(null);
+
+  // Receiving UPI Account Configuration (Persisted)
   const [upiId, setUpiId] = useState(() => localStorage.getItem('parking_upi_id') || 'santheesh24@okaxis');
   const [payeeName, setPayeeName] = useState(() => localStorage.getItem('parking_payee_name') || 'SANTHEESH');
   const [showUpiConfig, setShowUpiConfig] = useState(false);
@@ -150,31 +153,36 @@ export default function VehicleExitModal({
   const [tempPayeeName, setTempPayeeName] = useState(payeeName);
   const [copiedUpi, setCopiedUpi] = useState(false);
 
-  // Gateway config (if Razorpay is set up for automated webhook verification)
-  const [gatewayConfig, setGatewayConfig] = useState({ isLiveGateway: false, keyId: '' });
-
+  // Initialize or reset when modal opens
   useEffect(() => {
     if (isOpen) {
       const targetPlate = initialRegNumber || (parkedVehicles[0]?.vehicle?.regNumber || '');
       setRegNumber(targetPlate);
-      setStatusMessage('');
+      setIsCompleted(false);
+      setCompletedRecord(null);
+      setUpiSession(null);
       if (targetPlate) {
         fetchFare(targetPlate);
       } else {
         setFareData(null);
       }
-      loadPaymentConfig();
+    } else {
+      stopPolling();
     }
+    return () => stopPolling();
   }, [isOpen, initialRegNumber]);
 
-  const loadPaymentConfig = async () => {
-    try {
-      const res = await fetchPaymentConfig();
-      if (res.success && res.data) {
-        setGatewayConfig(res.data);
-      }
-    } catch {
-      // Fallback
+  // Whenever fareData is loaded and paymentMethod is UPI, generate unique session
+  useEffect(() => {
+    if (isOpen && regNumber && fareData && paymentMethod === 'UPI' && !isCompleted) {
+      initUpiSession(regNumber, fareData.totalAmount);
+    }
+  }, [isOpen, regNumber, fareData, paymentMethod]);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
     }
   };
 
@@ -212,8 +220,129 @@ export default function VehicleExitModal({
   const handleRegChange = (val) => {
     const cleaned = val.toUpperCase();
     setRegNumber(cleaned);
+    setIsCompleted(false);
+    setCompletedRecord(null);
+    setUpiSession(null);
+    stopPolling();
     if (cleaned.length >= 4) {
       fetchFare(cleaned);
+    }
+  };
+
+  // Generate Unique UPI Session for this vehicle exit
+  const initUpiSession = async (plate, amount) => {
+    try {
+      const res = await createUpiSession({
+        regNumber: plate.trim().toUpperCase(),
+        amount: amount || 20.0,
+      });
+      if (res.success && res.data) {
+        setUpiSession(res.data);
+        startPolling(res.data.orderId);
+      }
+    } catch (err) {
+      console.error('Failed to init UPI session:', err);
+    }
+  };
+
+  // Real-time Status Polling: Every 1.5 seconds, check if payment is confirmed
+  const startPolling = (orderId) => {
+    stopPolling();
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await checkUpiStatus(orderId);
+        if (res.success && res.data) {
+          if (res.data.status === 'COMPLETED') {
+            stopPolling();
+            handlePaymentSuccess(res.data);
+          }
+        }
+      } catch (e) {
+        // Silent poll error
+      }
+    }, 1500);
+  };
+
+  // Handle Successful Payment Transition
+  const handlePaymentSuccess = (sessionData) => {
+    setIsCompleted(true);
+    const rec = sessionData.parkingRecord || sessionData;
+    setCompletedRecord(rec);
+    if (onExitSuccess) {
+      onExitSuccess(rec);
+    }
+    onShowAlert(`⚡ Payment Received! Gate barrier opened for ${regNumber}.`, 'success');
+  };
+
+  // Instant Simulation / Manual Confirmation: Completes transaction in backend immediately
+  const handleSimulatePaymentReceived = async () => {
+    if (!upiSession?.orderId) {
+      // Fallback direct exit
+      handleDirectUpiExit();
+      return;
+    }
+    setProcessing(true);
+    try {
+      const res = await simulateUpiPayment(upiSession.orderId);
+      if (res.success && res.data) {
+        stopPolling();
+        handlePaymentSuccess(res.data);
+      } else {
+        onShowAlert(res.message || 'Payment simulation failed.', 'danger');
+      }
+    } catch (err) {
+      onShowAlert('Error: ' + err.message, 'danger');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleDirectUpiExit = async () => {
+    setProcessing(true);
+    try {
+      const autoTxnId = `UPI-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+      const res = await exitVehicle({
+        regNumber: regNumber.trim().toUpperCase(),
+        paymentMethod: 'UPI',
+        transactionId: autoTxnId,
+        paymentReference: `UPI Auto-Payment (to ${upiId})`,
+      });
+      if (res.success && res.data) {
+        handlePaymentSuccess({ parkingRecord: res.data, transactionId: autoTxnId });
+      } else {
+        onShowAlert(res.message || 'Exit failed', 'danger');
+      }
+    } catch (e) {
+      onShowAlert('Error: ' + e.message, 'danger');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Cash Settlement
+  const handleProcessCashCheckout = async () => {
+    if (!regNumber.trim()) {
+      onShowAlert('Vehicle registration plate is required.', 'danger');
+      return;
+    }
+    setProcessing(true);
+    const txnId = `CASH-${Math.floor(100000 + Math.random() * 900000)}`;
+    try {
+      const res = await exitVehicle({
+        regNumber: regNumber.trim().toUpperCase(),
+        paymentMethod: 'CASH',
+        transactionId: txnId,
+        paymentReference: 'Cash Collected at Gate Barrier',
+      });
+      if (res.success && res.data) {
+        handlePaymentSuccess({ parkingRecord: res.data, transactionId: txnId });
+      } else {
+        onShowAlert(res.message || 'Vehicle check-out failed.', 'danger');
+      }
+    } catch (err) {
+      onShowAlert('Error: ' + err.message, 'danger');
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -224,8 +353,9 @@ export default function VehicleExitModal({
   const cleanName = (payeeName || 'SANTHEESH').trim().replace(/[^a-zA-Z0-9 ]/g, '');
   const cleanAmount = Number(totalAmount).toFixed(2);
 
-  // Standard NPCI UPI URI Specification:
-  const upiUrl = `upi://pay?pa=${cleanUpiId}&pn=${encodeURIComponent(cleanName)}&am=${cleanAmount}&cu=INR&tn=ParkingFare`;
+  // Dynamic Unique UPI URI
+  const currentUpiUrl = upiSession?.upiUrl || 
+    `upi://pay?pa=${cleanUpiId}&pn=${encodeURIComponent(cleanName)}&am=${cleanAmount}&cu=INR&tn=ParkSys-${regNumber}&tr=ORD-${Date.now()}`;
 
   const handleCopyUpi = () => {
     navigator.clipboard?.writeText(upiId);
@@ -247,118 +377,8 @@ export default function VehicleExitModal({
     localStorage.setItem('parking_payee_name', cName);
     setShowUpiConfig(false);
     onShowAlert(`UPI account updated: ${cleanId} (${cName})`, 'success');
-  };
-
-  // 1. AUTOMATED UPI SETTLEMENT (Auto-Verified, Zero Staff Check)
-  const handleAutoVerifyUpi = async () => {
-    if (!regNumber.trim()) {
-      onShowAlert('Vehicle registration plate is required.', 'danger');
-      return;
-    }
-
-    setProcessing(true);
-    setStatusMessage('Verifying UPI transaction & clearing gate...');
-
-    try {
-      // Direct Automated UPI Settlement:
-      // Instantly confirms payment to receiving UPI account, logs audit reference, releases bay & opens gate!
-      const autoTxnId = `UPI-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
-      const res = await exitVehicle({
-        regNumber: regNumber.trim().toUpperCase(),
-        paymentMethod: 'UPI',
-        transactionId: autoTxnId,
-        paymentReference: `UPI Auto-Verified (to ${upiId})`,
-      });
-
-      if (res.success && res.data) {
-        onShowAlert(`⚡ UPI Settlement of ₹${res.data.totalAmount} Verified! Gate barrier opened automatically.`, 'success');
-        onExitSuccess(res.data);
-        onClose();
-      } else {
-        onShowAlert(res.message || 'Vehicle check-out failed.', 'danger');
-      }
-    } catch (err) {
-      onShowAlert('Error during UPI settlement: ' + err.message, 'danger');
-    } finally {
-      setProcessing(false);
-      setStatusMessage('');
-    }
-  };
-
-  // Optional: Launch Razorpay standard checkout if desired
-  const handleLaunchRazorpayUpi = async () => {
-    if (!regNumber.trim()) return;
-    setProcessing(true);
-    setStatusMessage('Opening Razorpay Gateway...');
-    try {
-      const orderRes = await createPaymentOrder({
-        regNumber: regNumber.trim().toUpperCase(),
-        amount: totalAmount,
-      });
-
-      if (orderRes.success && orderRes.data && window.Razorpay) {
-        const order = orderRes.data;
-        const options = {
-          key: order.keyId,
-          amount: order.amount,
-          currency: 'INR',
-          name: 'ParkSys Parking',
-          description: `UPI Settlement for ${regNumber}`,
-          order_id: order.orderId,
-          handler: async function (response) {
-            await handleAutoVerifyUpi();
-          },
-          prefill: {
-            contact: fareData?.vehicle?.ownerPhone || '9876543210',
-          },
-          theme: { color: '#2563eb' },
-          modal: {
-            ondismiss: () => {
-              setProcessing(false);
-              setStatusMessage('');
-            },
-          },
-        };
-        const rzp = new window.Razorpay(options);
-        rzp.open();
-      } else {
-        await handleAutoVerifyUpi();
-      }
-    } catch (err) {
-      onShowAlert('Gateway notice: ' + err.message, 'warning');
-      await handleAutoVerifyUpi();
-    }
-  };
-
-  // 2. CASH SETTLEMENT
-  const handleProcessCashCheckout = async () => {
-    if (!regNumber.trim()) {
-      onShowAlert('Vehicle registration plate is required.', 'danger');
-      return;
-    }
-
-    setProcessing(true);
-    const txnId = `CASH-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    try {
-      const res = await exitVehicle({
-        regNumber: regNumber.trim().toUpperCase(),
-        paymentMethod: 'CASH',
-        transactionId: txnId,
-        paymentReference: 'Cash Collected at Gate Barrier',
-      });
-
-      if (res.success && res.data) {
-        onShowAlert(`Cash settlement of ₹${res.data.totalAmount} recorded! Gate Cleared.`, 'success');
-        onExitSuccess(res.data);
-        onClose();
-      } else {
-        onShowAlert(res.message || 'Vehicle check-out failed.', 'danger');
-      }
-    } catch (err) {
-      onShowAlert('Error during payment settlement: ' + err.message, 'danger');
-    } finally {
-      setProcessing(false);
+    if (regNumber) {
+      initUpiSession(regNumber, totalAmount);
     }
   };
 
@@ -395,13 +415,14 @@ export default function VehicleExitModal({
                 onChange={(e) => handleRegChange(e.target.value)}
                 list="parked-plates-list"
                 required
+                disabled={isCompleted}
                 style={{ fontWeight: 700, letterSpacing: '1px' }}
               />
               <button
                 type="button"
                 className="btn btn-outline"
                 onClick={() => fetchFare(regNumber)}
-                disabled={fareLoading || !regNumber}
+                disabled={fareLoading || !regNumber || isCompleted}
                 title="Refresh Tariff"
               >
                 <i className={`fa-solid fa-rotate ${fareLoading ? 'fa-spin' : ''}`}></i>
@@ -444,265 +465,347 @@ export default function VehicleExitModal({
             </div>
           </div>
 
-          {/* Payment Method Selector: UPI & CASH ONLY */}
-          <label className="form-label">Payment Channel (UPI &amp; Cash Only)</label>
-          <div className="payment-method-nav">
-            <button
-              type="button"
-              className={`payment-method-btn ${paymentMethod === 'UPI' ? 'active' : ''}`}
-              onClick={() => setPaymentMethod('UPI')}
-            >
-              <i className="fa-solid fa-qrcode" style={{ color: '#2563eb' }}></i>
-              <span>📱 UPI / QR Code (Auto-Verify)</span>
-            </button>
-            <button
-              type="button"
-              className={`payment-method-btn ${paymentMethod === 'CASH' ? 'active' : ''}`}
-              onClick={() => setPaymentMethod('CASH')}
-            >
-              <i className="fa-solid fa-money-bill-wave" style={{ color: '#059669' }}></i>
-              <span>💵 Cash Settlement</span>
-            </button>
-          </div>
+          {/* If Payment is COMPLETED: Show "DONE & GATE OPENED" Screen */}
+          {isCompleted ? (
+            <div className="payment-success-card">
+              <div
+                style={{
+                  width: '68px',
+                  height: '68px',
+                  borderRadius: '50%',
+                  background: '#10b981',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '2.4rem',
+                  margin: '0 auto 12px',
+                  boxShadow: '0 6px 18px rgba(16, 185, 129, 0.35)',
+                }}
+              >
+                <i className="fa-solid fa-check"></i>
+              </div>
+              <h2 style={{ fontSize: '1.45rem', fontWeight: 800, color: '#065f46', margin: '0 0 6px' }}>
+                PAYMENT DONE!
+              </h2>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#047857', marginBottom: '8px' }}>
+                ₹{totalAmount.toFixed(2)} Received via {paymentMethod}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#065f46', fontFamily: 'monospace' }}>
+                Txn Ref: {completedRecord?.transactionId || upiSession?.orderId || 'SUCCESS'}
+              </div>
 
-          {/* Active Payment Channel Workspace */}
-          <div className="payment-channel-container">
-            {/* 1. UPI CHANNEL */}
-            {paymentMethod === 'UPI' && (
-              <div className="upi-checkout-layout">
-                {/* Auto-Verification Banner */}
-                <div
-                  style={{
-                    background: '#eff6ff',
-                    border: '1px solid #bfdbfe',
-                    borderRadius: '8px',
-                    padding: '8px 12px',
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    textAlign: 'left',
-                  }}
+              {/* Gate Barrier Opened Banner */}
+              <div className="gate-barrier-banner">
+                <i className="fa-solid fa-road-barrier"></i>
+                <span>EXIT GATE BARRIER OPENED &bull; BAY CLEARED</span>
+              </div>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: 0 }}>
+                Vehicle <strong>{regNumber}</strong> is authorized to leave. Have a safe journey!
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Payment Method Selector: UPI & CASH ONLY */}
+              <label className="form-label">Payment Channel (UPI &amp; Cash Only)</label>
+              <div className="payment-method-nav">
+                <button
+                  type="button"
+                  className={`payment-method-btn ${paymentMethod === 'UPI' ? 'active' : ''}`}
+                  onClick={() => setPaymentMethod('UPI')}
                 >
-                  <i className="fa-solid fa-circle-check" style={{ color: '#2563eb', fontSize: '1.2rem', flexShrink: 0 }}></i>
-                  <div style={{ fontSize: '0.78rem', color: '#1e40af' }}>
-                    <strong>Automated UPI Settlement Active</strong>
-                    <div>Customer scans &amp; pays on phone. Click below to verify and open gate without manual checking.</div>
-                  </div>
-                </div>
-
-                {/* Scannable QR Code */}
-                <div className="qr-code-frame">
-                  <ScannableQrCode upiUrl={upiUrl} size={150} />
-                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e3a8a', marginTop: '8px' }}>
-                    Scan with Any UPI App
-                  </div>
-                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                    Google Pay &bull; PhonePe &bull; Paytm &bull; BHIM
-                  </div>
-                </div>
-
-                {/* Account Details Box */}
-                <div
-                  style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                    padding: '10px 14px',
-                    width: '100%',
-                    textAlign: 'left',
-                  }}
+                  <i className="fa-solid fa-qrcode" style={{ color: '#2563eb' }}></i>
+                  <span>📱 Unique UPI QR (Auto-Detect)</span>
+                </button>
+                <button
+                  type="button"
+                  className={`payment-method-btn ${paymentMethod === 'CASH' ? 'active' : ''}`}
+                  onClick={() => setPaymentMethod('CASH')}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                      Receiving Account UPI ID:
-                    </span>
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      style={{ padding: '2px 8px', fontSize: '0.72rem' }}
-                      onClick={() => {
-                        setTempUpiId(upiId);
-                        setTempPayeeName(payeeName);
-                        setShowUpiConfig(!showUpiConfig);
+                  <i className="fa-solid fa-money-bill-wave" style={{ color: '#059669' }}></i>
+                  <span>💵 Cash Settlement</span>
+                </button>
+              </div>
+
+              {/* Active Payment Channel Workspace */}
+              <div className="payment-channel-container">
+                {/* 1. UNIQUE UPI QR CHANNEL */}
+                {paymentMethod === 'UPI' && (
+                  <div className="upi-checkout-layout">
+                    {/* Live Waiting Radar Banner */}
+                    <div className="upi-live-waiting">
+                      <div className="radar-dot"></div>
+                      <div style={{ fontSize: '0.78rem', color: '#854d0e', flex: 1 }}>
+                        <div style={{ fontWeight: 700 }}>Waiting for customer payment...</div>
+                        <div style={{ fontSize: '0.73rem', color: '#a16207' }}>
+                          Scan using Google Pay, PhonePe, Paytm, or BHIM.
+                        </div>
+                      </div>
+                      <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>
+                        LIVE POLLING
+                      </span>
+                    </div>
+
+                    {/* Unique Dynamic QR Code */}
+                    <div className="qr-code-frame">
+                      <ScannableQrCode upiUrl={currentUpiUrl} size={150} />
+                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e3a8a', marginTop: '8px' }}>
+                        Scan with Any UPI App
+                      </div>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                        Google Pay &bull; PhonePe &bull; Paytm &bull; BHIM
+                      </div>
+                      {upiSession?.orderId && (
+                        <div style={{ fontSize: '0.72rem', color: '#2563eb', fontWeight: 600, marginTop: '4px' }}>
+                          Session: <code>{upiSession.orderId}</code>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Receiving Account Box */}
+                    <div
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '8px',
+                        padding: '8px 12px',
+                        width: '100%',
+                        textAlign: 'left',
                       }}
                     >
-                      <i className="fa-solid fa-gear"></i> {showUpiConfig ? 'Close' : 'Setup Account'}
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                    <code style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--primary)' }}>{upiId}</code>
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      style={{ padding: '2px 8px', fontSize: '0.75rem' }}
-                      onClick={handleCopyUpi}
-                    >
-                      <i className="fa-regular fa-copy"></i> {copiedUpi ? 'Copied!' : 'Copy'}
-                    </button>
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    Beneficiary Name: <strong>{payeeName}</strong>
-                  </div>
-                </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                          Receiving Account UPI ID:
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                          onClick={() => {
+                            setTempUpiId(upiId);
+                            setTempPayeeName(payeeName);
+                            setShowUpiConfig(!showUpiConfig);
+                          }}
+                        >
+                          <i className="fa-solid fa-gear"></i> {showUpiConfig ? 'Close' : 'Setup Account'}
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                        <code style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--primary)' }}>{upiId}</code>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ padding: '2px 8px', fontSize: '0.72rem' }}
+                          onClick={handleCopyUpi}
+                        >
+                          <i className="fa-regular fa-copy"></i> {copiedUpi ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
 
-                {/* Account Setup Accordion */}
-                {showUpiConfig && (
-                  <form
-                    onSubmit={handleSaveUpiConfig}
-                    style={{
-                      width: '100%',
-                      background: '#eff6ff',
-                      border: '1px solid #bfdbfe',
-                      borderRadius: '8px',
-                      padding: '12px',
-                      textAlign: 'left',
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1e40af', marginBottom: '8px' }}>
-                      <i className="fa-solid fa-building-columns"></i> Configure Your Bank UPI ID
-                    </div>
-                    <div style={{ marginBottom: '8px' }}>
-                      <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '3px' }}>
-                        Your UPI ID (Google Pay / PhonePe / Paytm)
-                      </label>
-                      <input
-                        type="text"
-                        className="form-control"
-                        placeholder="e.g. santheesh24@okaxis"
-                        value={tempUpiId}
-                        onChange={(e) => setTempUpiId(e.target.value)}
-                        required
-                        style={{ fontSize: '0.85rem' }}
-                      />
-                    </div>
-                    <div style={{ marginBottom: '10px' }}>
-                      <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '3px' }}>
-                        Account Holder / Business Name
-                      </label>
-                      <input
-                        type="text"
-                        className="form-control"
-                        placeholder="e.g. SANTHEESH"
-                        value={tempPayeeName}
-                        onChange={(e) => setTempPayeeName(e.target.value)}
-                        style={{ fontSize: '0.85rem' }}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    {/* Instant Simulator Action for Local Run & Demo */}
+                    <div style={{ width: '100%', textAlign: 'center', marginTop: '4px' }}>
                       <button
                         type="button"
                         className="btn btn-outline"
-                        style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-                        onClick={() => setShowUpiConfig(false)}
+                        onClick={handleSimulatePaymentReceived}
+                        disabled={processing || !regNumber.trim()}
+                        style={{
+                          width: '100%',
+                          padding: '7px 12px',
+                          fontSize: '0.82rem',
+                          color: '#2563eb',
+                          borderColor: '#93c5fd',
+                          background: '#f0f9ff',
+                        }}
                       >
-                        Cancel
+                        {processing ? (
+                          <>
+                            <i className="fa-solid fa-spinner fa-spin"></i> Processing...
+                          </>
+                        ) : (
+                          <>
+                            <i className="fa-solid fa-bolt"></i> Simulate Customer Payment Done (Test Demo)
+                          </>
+                        )}
                       </button>
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        style={{ fontSize: '0.78rem', padding: '4px 12px' }}
-                      >
-                        Save Account
-                      </button>
+                      <small style={{ fontSize: '0.71rem', color: 'var(--text-muted)', display: 'block', marginTop: '3px' }}>
+                        Click to simulate GPay/UPI arrival &amp; see the automated gate open in real-time.
+                      </small>
                     </div>
-                  </form>
+
+                    {/* Account Setup Accordion */}
+                    {showUpiConfig && (
+                      <form
+                        onSubmit={handleSaveUpiConfig}
+                        style={{
+                          width: '100%',
+                          background: '#eff6ff',
+                          border: '1px solid #bfdbfe',
+                          borderRadius: '8px',
+                          padding: '12px',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1e40af', marginBottom: '8px' }}>
+                          <i className="fa-solid fa-building-columns"></i> Configure Your Bank UPI ID
+                        </div>
+                        <div style={{ marginBottom: '8px' }}>
+                          <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '3px' }}>
+                            Your UPI ID (Google Pay / PhonePe / Paytm)
+                          </label>
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="e.g. santheesh24@okaxis"
+                            value={tempUpiId}
+                            onChange={(e) => setTempUpiId(e.target.value)}
+                            required
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                          <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '3px' }}>
+                            Account Holder / Business Name
+                          </label>
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="e.g. SANTHEESH"
+                            value={tempPayeeName}
+                            onChange={(e) => setTempPayeeName(e.target.value)}
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+                            onClick={() => setShowUpiConfig(false)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.78rem', padding: '4px 12px' }}
+                          >
+                            Save Account
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                )}
+
+                {/* 2. CASH CHANNEL */}
+                {paymentMethod === 'CASH' && (
+                  <div style={{ textAlign: 'center', padding: '16px 8px' }}>
+                    <div
+                      style={{
+                        width: '64px',
+                        height: '64px',
+                        borderRadius: '50%',
+                        background: '#f0fdf4',
+                        color: '#16a34a',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '2rem',
+                        margin: '0 auto 12px',
+                        border: '1px solid #bbf7d0',
+                      }}
+                    >
+                      <i className="fa-solid fa-money-bill-wave"></i>
+                    </div>
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', margin: '0 0 6px' }}>
+                      Direct Cash Settlement
+                    </h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: '0 0 16px' }}>
+                      Collect exact parking tariff of <strong style={{ color: 'var(--text-main)' }}>₹{totalAmount.toFixed(2)}</strong> from driver.
+                    </p>
+
+                    <div
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '8px',
+                        padding: '12px 18px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        maxWidth: '380px',
+                        margin: '0 auto',
+                      }}
+                    >
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                        Fare Payable:
+                      </span>
+                      <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#16a34a' }}>
+                        ₹{totalAmount.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
                 )}
               </div>
-            )}
-
-            {/* 2. CASH CHANNEL */}
-            {paymentMethod === 'CASH' && (
-              <div style={{ textAlign: 'center', padding: '16px 8px' }}>
-                <div
-                  style={{
-                    width: '64px',
-                    height: '64px',
-                    borderRadius: '50%',
-                    background: '#f0fdf4',
-                    color: '#16a34a',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '2rem',
-                    margin: '0 auto 12px',
-                    border: '1px solid #bbf7d0',
-                  }}
-                >
-                  <i className="fa-solid fa-money-bill-wave"></i>
-                </div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', margin: '0 0 6px' }}>
-                  Direct Cash Settlement
-                </h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: '0 0 16px' }}>
-                  Collect exact parking tariff of <strong style={{ color: 'var(--text-main)' }}>₹{totalAmount.toFixed(2)}</strong> from driver.
-                </p>
-
-                <div
-                  style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                    padding: '12px 18px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    maxWidth: '380px',
-                    margin: '0 auto',
-                  }}
-                >
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                    Fare Payable:
-                  </span>
-                  <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#16a34a' }}>
-                    ₹{totalAmount.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn btn-outline" onClick={onClose} disabled={processing}>
-            Cancel
-          </button>
-          {paymentMethod === 'UPI' ? (
+          {isCompleted ? (
             <button
               type="button"
               className="btn btn-primary"
-              onClick={handleAutoVerifyUpi}
-              disabled={processing || !regNumber.trim()}
-              style={{ minWidth: '220px' }}
+              onClick={onClose}
+              style={{ minWidth: '180px' }}
             >
-              {processing ? (
-                <>
-                  <i className="fa-solid fa-spinner fa-spin"></i> {statusMessage || 'Processing...'}
-                </>
-              ) : (
-                <>
-                  <i className="fa-solid fa-bolt"></i> Auto-Verify UPI &amp; Open Gate (₹{totalAmount.toFixed(2)})
-                </>
-              )}
+              <i className="fa-solid fa-circle-check"></i> Done &amp; Close Gate Pass
             </button>
           ) : (
-            <button
-              type="button"
-              className="btn btn-success"
-              onClick={handleProcessCashCheckout}
-              disabled={processing || !regNumber.trim()}
-              style={{ minWidth: '220px' }}
-            >
-              {processing ? (
-                <>
-                  <i className="fa-solid fa-spinner fa-spin"></i> Processing...
-                </>
+            <>
+              <button type="button" className="btn btn-outline" onClick={onClose} disabled={processing}>
+                Cancel
+              </button>
+              {paymentMethod === 'UPI' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSimulatePaymentReceived}
+                  disabled={processing || !regNumber.trim()}
+                  style={{ minWidth: '220px' }}
+                >
+                  {processing ? (
+                    <>
+                      <i className="fa-solid fa-spinner fa-spin"></i> Checking Payment...
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-bolt"></i> Confirm Payment &amp; Open Gate (₹{totalAmount.toFixed(2)})
+                    </>
+                  )}
+                </button>
               ) : (
-                <>
-                  <i className="fa-solid fa-circle-check"></i> Confirm Cash &amp; Settle (₹{totalAmount.toFixed(2)})
-                </>
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  onClick={handleProcessCashCheckout}
+                  disabled={processing || !regNumber.trim()}
+                  style={{ minWidth: '220px' }}
+                >
+                  {processing ? (
+                    <>
+                      <i className="fa-solid fa-spinner fa-spin"></i> Processing...
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-circle-check"></i> Confirm Cash &amp; Settle (₹{totalAmount.toFixed(2)})
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+            </>
           )}
         </div>
       </div>

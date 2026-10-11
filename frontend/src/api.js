@@ -167,6 +167,24 @@ export async function fetchPaymentConfig() {
   return safeFetch(`${BASE_URL}/api/payment/config`);
 }
 
+export async function createUpiSession(sessionData) {
+  return safeFetch(`${BASE_URL}/api/payment/create-upi-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(sessionData),
+  });
+}
+
+export async function checkUpiStatus(orderId) {
+  return safeFetch(`${BASE_URL}/api/payment/upi-status?orderId=${encodeURIComponent(orderId)}`);
+}
+
+export async function simulateUpiPayment(orderId) {
+  return safeFetch(`${BASE_URL}/api/payment/simulate-upi-payment?orderId=${encodeURIComponent(orderId)}`, {
+    method: 'POST',
+  });
+}
+
 export async function createPaymentOrder(orderData) {
   return safeFetch(`${BASE_URL}/api/payment/create-order`, {
     method: 'POST',

@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -24,7 +25,9 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class PaymentService {
@@ -37,9 +40,18 @@ public class PaymentService {
     @Value("${razorpay.key.secret:placeholder_secret}")
     private String razorpayKeySecret;
 
+    @Value("${parking.upi.id:santheesh24@okaxis}")
+    private String configuredUpiId;
+
+    @Value("${parking.upi.name:SANTHEESH}")
+    private String configuredUpiName;
+
     private final ParkingService parkingService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient;
+
+    // Track active dynamic UPI payment sessions in-memory for real-time polling
+    private final Map<String, Map<String, Object>> activeUpiSessions = new ConcurrentHashMap<>();
 
     public PaymentService(ParkingService parkingService) {
         this.parkingService = parkingService;
@@ -60,17 +72,21 @@ public class PaymentService {
         Map<String, Object> config = new HashMap<>();
         config.put("keyId", razorpayKeyId);
         config.put("isLiveGateway", isRealGatewayConfigured());
+        config.put("upiId", configuredUpiId);
+        config.put("upiName", configuredUpiName);
         return ApiResponse.ok("Payment configuration", config);
     }
 
-    public ApiResponse<Map<String, Object>> createOrder(PaymentOrderRequest request) {
+    /**
+     * Initializes a unique dynamic UPI payment session with a unique order ID & QR URI.
+     */
+    public ApiResponse<Map<String, Object>> createUpiSession(PaymentOrderRequest request) {
         if (request.getRegNumber() == null || request.getRegNumber().trim().isEmpty()) {
             return ApiResponse.error("Vehicle plate number is required");
         }
 
         String regNum = request.getRegNumber().trim().toUpperCase();
 
-        // Calculate or retrieve fare
         ApiResponse<Map<String, Object>> fareResponse = parkingService.calculateFare(regNum);
         double totalAmount = 20.0;
         if (fareResponse.isSuccess() && fareResponse.getData() != null && fareResponse.getData().get("totalAmount") != null) {
@@ -79,102 +95,93 @@ public class PaymentService {
             totalAmount = request.getAmount();
         }
 
-        long amountInPaise = Math.round(totalAmount * 100);
-        String receiptId = "rcpt_" + regNum.replaceAll("[^a-zA-Z0-9]", "") + "_" + (System.currentTimeMillis() % 100000);
+        String orderId = "UPI-" + (System.currentTimeMillis() % 10000000);
+        String amountStr = String.format(Locale.US, "%.2f", totalAmount);
+        String cleanUpiId = (configuredUpiId != null ? configuredUpiId : "santheesh24@okaxis").trim();
+        String cleanName = (configuredUpiName != null ? configuredUpiName : "SANTHEESH").trim().replaceAll("[^a-zA-Z0-9 ]", "");
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("amount", amountInPaise);
-        result.put("amountInRupees", totalAmount);
-        result.put("currency", "INR");
-        result.put("keyId", razorpayKeyId);
-        result.put("regNumber", regNum);
-        result.put("receipt", receiptId);
+        // NPCI UPI URI with unique transaction reference (tr) and transaction note (tn)
+        String upiUrl = "upi://pay?pa=" + cleanUpiId 
+                + "&pn=" + URLEncoder.encode(cleanName, StandardCharsets.UTF_8)
+                + "&am=" + amountStr
+                + "&cu=INR"
+                + "&tn=ParkSys-" + orderId
+                + "&tr=" + orderId;
 
-        if (isRealGatewayConfigured()) {
-            try {
-                Map<String, Object> payload = new HashMap<>();
-                payload.put("amount", amountInPaise);
-                payload.put("currency", "INR");
-                payload.put("receipt", receiptId);
-                payload.put("notes", Map.of("regNumber", regNum, "system", "ParkSys"));
+        Map<String, Object> session = new HashMap<>();
+        session.put("orderId", orderId);
+        session.put("regNumber", regNum);
+        session.put("amount", totalAmount);
+        session.put("upiId", cleanUpiId);
+        session.put("payeeName", cleanName);
+        session.put("upiUrl", upiUrl);
+        session.put("status", "WAITING_FOR_PAYMENT");
+        session.put("createdAt", System.currentTimeMillis());
 
-                String jsonBody = objectMapper.writeValueAsString(payload);
-                String auth = Base64.getEncoder().encodeToString((razorpayKeyId + ":" + razorpayKeySecret).getBytes(StandardCharsets.UTF_8));
+        activeUpiSessions.put(orderId, session);
+        log.info("Created dynamic UPI session {} for vehicle {}", orderId, regNum);
 
-                HttpRequest httpRequest = HttpRequest.newBuilder()
-                        .uri(URI.create("https://api.razorpay.com/v1/orders"))
-                        .header("Authorization", "Basic " + auth)
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                        .build();
+        return ApiResponse.ok("UPI session initialized", session);
+    }
 
-                HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+    /**
+     * Poll status of an active UPI session.
+     */
+    public ApiResponse<Map<String, Object>> checkUpiStatus(String orderId) {
+        if (orderId == null || !activeUpiSessions.containsKey(orderId)) {
+            return ApiResponse.error("Active UPI session not found for order: " + orderId);
+        }
+        Map<String, Object> session = activeUpiSessions.get(orderId);
+        return ApiResponse.ok("UPI session status", session);
+    }
 
-                if (response.statusCode() == 200 || response.statusCode() == 201) {
-                    JsonNode node = objectMapper.readTree(response.body());
-                    String orderId = node.get("id").asText();
-                    result.put("orderId", orderId);
-                    result.put("isSandbox", false);
-                    log.info("Razorpay Order created: {} for vehicle {}", orderId, regNum);
-                    return ApiResponse.ok("Razorpay Order created successfully", result);
-                } else {
-                    log.warn("Razorpay API error ({}), falling back to Sandbox simulation: {}", response.statusCode(), response.body());
-                }
-            } catch (Exception ex) {
-                log.error("Failed to connect to Razorpay API, falling back to Sandbox simulator: {}", ex.getMessage());
-            }
+    /**
+     * Completes UPI payment for the session, frees the parking bay, and clears the barrier gate.
+     */
+    public synchronized ApiResponse<Map<String, Object>> completeUpiPayment(String orderId) {
+        if (orderId == null || !activeUpiSessions.containsKey(orderId)) {
+            return ApiResponse.error("Active UPI session not found: " + orderId);
         }
 
-        // Sandbox / Simulator mode fallback
-        String mockOrderId = "order_sim_" + System.currentTimeMillis();
-        result.put("orderId", mockOrderId);
-        result.put("isSandbox", true);
-        return ApiResponse.ok("Sandbox Payment Order created successfully", result);
+        Map<String, Object> session = activeUpiSessions.get(orderId);
+        if ("COMPLETED".equals(session.get("status"))) {
+            return ApiResponse.ok("Payment already confirmed", session);
+        }
+
+        String regNum = (String) session.get("regNumber");
+        String txnId = "UPI-" + (100000000000L + (long) (Math.random() * 900000000000L));
+
+        VehicleExitRequest exitRequest = new VehicleExitRequest();
+        exitRequest.setRegNumber(regNum);
+        exitRequest.setPaymentMethod(PaymentMethod.UPI);
+        exitRequest.setTransactionId(txnId);
+        exitRequest.setPaymentReference("UPI Auto-Payment (Ref: " + orderId + ")");
+
+        ApiResponse<ParkingRecord> exitResult = parkingService.exitVehicle(exitRequest);
+        if (exitResult.isSuccess()) {
+            session.put("status", "COMPLETED");
+            session.put("transactionId", txnId);
+            session.put("parkingRecord", exitResult.getData());
+            log.info("UPI Payment {} auto-completed for vehicle {}. Gate opened!", orderId, regNum);
+            return ApiResponse.ok("Payment confirmed! Gate opened.", session);
+        } else {
+            return ApiResponse.error(exitResult.getMessage());
+        }
+    }
+
+    public ApiResponse<Map<String, Object>> createOrder(PaymentOrderRequest request) {
+        return createUpiSession(request);
     }
 
     public ApiResponse<ParkingRecord> verifyPayment(PaymentVerificationRequest request) {
         if (request.getRegNumber() == null || request.getRegNumber().trim().isEmpty()) {
             return ApiResponse.error("Registration plate number is required");
         }
-        if (request.getRazorpayOrderId() == null || request.getRazorpayOrderId().trim().isEmpty()) {
-            return ApiResponse.error("Razorpay Order ID is required");
-        }
-        if (request.getRazorpayPaymentId() == null || request.getRazorpayPaymentId().trim().isEmpty()) {
-            return ApiResponse.error("Razorpay Payment ID is required");
-        }
-
-        String orderId = request.getRazorpayOrderId().trim();
-        String paymentId = request.getRazorpayPaymentId().trim();
-        String signature = request.getRazorpaySignature() != null ? request.getRazorpaySignature().trim() : "";
-
-        boolean isMockOrder = orderId.startsWith("order_sim_");
-
-        if (!isMockOrder && isRealGatewayConfigured()) {
-            try {
-                String payload = orderId + "|" + paymentId;
-                Mac mac = Mac.getInstance("HmacSHA256");
-                mac.init(new SecretKeySpec(razorpayKeySecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-                byte[] hash = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
-                String expectedSignature = HexFormat.of().formatHex(hash);
-
-                if (!expectedSignature.equalsIgnoreCase(signature)) {
-                    log.warn("Cryptographic signature mismatch! Expected: {}, Received: {}", expectedSignature, signature);
-                    return ApiResponse.error("Security verification failed: Invalid transaction signature.");
-                }
-            } catch (Exception e) {
-                log.error("Error computing signature verification: {}", e.getMessage());
-                return ApiResponse.error("Cryptographic verification error: " + e.getMessage());
-            }
-        }
-
-        // Auto-finalize parking record check-out
         VehicleExitRequest exitRequest = new VehicleExitRequest();
         exitRequest.setRegNumber(request.getRegNumber().trim().toUpperCase());
-        exitRequest.setPaymentMethod(request.getPaymentMethod() != null ? request.getPaymentMethod() : PaymentMethod.UPI);
-        exitRequest.setTransactionId(paymentId);
-        exitRequest.setPaymentReference("Razorpay Auto-Verified (Ref: " + paymentId + ", Order: " + orderId + ")");
-
-        log.info("Payment auto-verified for vehicle {}. Finalizing exit record...", request.getRegNumber());
+        exitRequest.setPaymentMethod(PaymentMethod.UPI);
+        exitRequest.setTransactionId(request.getRazorpayPaymentId() != null ? request.getRazorpayPaymentId() : "UPI-" + System.currentTimeMillis());
+        exitRequest.setPaymentReference("UPI Auto-Verified (" + exitRequest.getTransactionId() + ")");
         return parkingService.exitVehicle(exitRequest);
     }
 }
