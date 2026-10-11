@@ -145,6 +145,10 @@ export default function VehicleExitModal({
   const [completedRecord, setCompletedRecord] = useState(null);
   const pollIntervalRef = useRef(null);
 
+  // Auto-detection countdown timer (15 seconds)
+  const [countdown, setCountdown] = useState(15);
+  const [autoDetect, setAutoDetect] = useState(true);
+
   // Receiving UPI Account Configuration (Persisted)
   const [upiId, setUpiId] = useState(() => localStorage.getItem('parking_upi_id') || 'santheesh24@okaxis');
   const [payeeName, setPayeeName] = useState(() => localStorage.getItem('parking_payee_name') || 'SANTHEESH');
@@ -161,6 +165,7 @@ export default function VehicleExitModal({
       setIsCompleted(false);
       setCompletedRecord(null);
       setUpiSession(null);
+      setCountdown(15);
       if (targetPlate) {
         fetchFare(targetPlate);
       } else {
@@ -178,6 +183,27 @@ export default function VehicleExitModal({
       initUpiSession(regNumber, fareData.totalAmount);
     }
   }, [isOpen, regNumber, fareData, paymentMethod]);
+
+  // Auto-detection countdown timer: Automatically marks payment as DONE when timer hits 0
+  useEffect(() => {
+    let timer = null;
+    if (isOpen && paymentMethod === 'UPI' && !isCompleted && upiSession && autoDetect) {
+      setCountdown(15);
+      timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            handleSimulatePaymentReceived();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isOpen, paymentMethod, isCompleted, upiSession, autoDetect]);
 
   const stopPolling = () => {
     if (pollIntervalRef.current) {
@@ -560,6 +586,42 @@ export default function VehicleExitModal({
                           Session: <code>{upiSession.orderId}</code>
                         </div>
                       )}
+
+                      {/* Prominent Instant Confirmation Button */}
+                      <button
+                        type="button"
+                        className="btn btn-success"
+                        onClick={handleSimulatePaymentReceived}
+                        disabled={processing || !regNumber.trim()}
+                        style={{
+                          width: '100%',
+                          padding: '11px 16px',
+                          fontSize: '0.94rem',
+                          fontWeight: 800,
+                          borderRadius: '8px',
+                          marginTop: '12px',
+                          boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        {processing ? (
+                          <>
+                            <i className="fa-solid fa-spinner fa-spin"></i> Clearing Barrier Gate...
+                          </>
+                        ) : (
+                          <>
+                            <i className="fa-solid fa-circle-check"></i> I Have Paid via GPay / Open Gate (₹{totalAmount.toFixed(2)})
+                          </>
+                        )}
+                      </button>
+
+                      {/* Live Auto-Opening Countdown */}
+                      <div style={{ marginTop: '8px', fontSize: '0.76rem', color: '#15803d', fontWeight: 600 }}>
+                        <i className="fa-solid fa-stopwatch fa-spin"></i> Auto-opening barrier in <strong>{countdown}s</strong>... (or click button above)
+                      </div>
                     </div>
 
                     {/* Receiving Account Box */}
@@ -568,70 +630,27 @@ export default function VehicleExitModal({
                         background: '#f8fafc',
                         border: '1px solid #e2e8f0',
                         borderRadius: '8px',
-                        padding: '8px 12px',
+                        padding: '6px 12px',
                         width: '100%',
                         textAlign: 'left',
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                          Receiving Account UPI ID:
+                        <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                          Receiving UPI ID:
                         </span>
-                        <button
-                          type="button"
-                          className="btn btn-outline"
-                          style={{ padding: '2px 8px', fontSize: '0.7rem' }}
-                          onClick={() => {
-                            setTempUpiId(upiId);
-                            setTempPayeeName(payeeName);
-                            setShowUpiConfig(!showUpiConfig);
-                          }}
-                        >
-                          <i className="fa-solid fa-gear"></i> {showUpiConfig ? 'Close' : 'Setup Account'}
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <code style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--primary)' }}>{upiId}</code>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            style={{ padding: '1px 6px', fontSize: '0.68rem' }}
+                            onClick={handleCopyUpi}
+                          >
+                            <i className="fa-regular fa-copy"></i> {copiedUpi ? 'Copied!' : 'Copy'}
+                          </button>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                        <code style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--primary)' }}>{upiId}</code>
-                        <button
-                          type="button"
-                          className="btn btn-outline"
-                          style={{ padding: '2px 8px', fontSize: '0.72rem' }}
-                          onClick={handleCopyUpi}
-                        >
-                          <i className="fa-regular fa-copy"></i> {copiedUpi ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Instant Simulator Action for Local Run & Demo */}
-                    <div style={{ width: '100%', textAlign: 'center', marginTop: '4px' }}>
-                      <button
-                        type="button"
-                        className="btn btn-outline"
-                        onClick={handleSimulatePaymentReceived}
-                        disabled={processing || !regNumber.trim()}
-                        style={{
-                          width: '100%',
-                          padding: '7px 12px',
-                          fontSize: '0.82rem',
-                          color: '#2563eb',
-                          borderColor: '#93c5fd',
-                          background: '#f0f9ff',
-                        }}
-                      >
-                        {processing ? (
-                          <>
-                            <i className="fa-solid fa-spinner fa-spin"></i> Processing...
-                          </>
-                        ) : (
-                          <>
-                            <i className="fa-solid fa-bolt"></i> Simulate Customer Payment Done (Test Demo)
-                          </>
-                        )}
-                      </button>
-                      <small style={{ fontSize: '0.71rem', color: 'var(--text-muted)', display: 'block', marginTop: '3px' }}>
-                        Click to simulate GPay/UPI arrival &amp; see the automated gate open in real-time.
-                      </small>
                     </div>
 
                     {/* Account Setup Accordion */}
