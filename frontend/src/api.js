@@ -162,3 +162,23 @@ export async function changePassword(changeData) {
     body: JSON.stringify(changeData),
   });
 }
+
+export async function fetchPaymentConfig() {
+  return safeFetch(`${BASE_URL}/api/payment/config`);
+}
+
+export async function createPaymentOrder(orderData) {
+  return safeFetch(`${BASE_URL}/api/payment/create-order`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(orderData),
+  });
+}
+
+export async function verifyPayment(verificationData) {
+  return safeFetch(`${BASE_URL}/api/payment/verify-payment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(verificationData),
+  });
+}
