@@ -2,8 +2,12 @@
  * Simple, clean API service using standard browser fetch.
  * Placement friendly: Uses native fetch and async/await with clean error handling.
  */
-
-const BASE_URL = ''; // Relative URL works with both Vite proxy and Spring Boot static hosting
+/**
+ * Base URL for Backend API:
+ * - When running locally (npm run dev) or when hosted directly by Spring Boot: defaults to ''
+ * - When deployed separately to Firebase Hosting: uses VITE_API_BASE_URL (e.g. https://your-backend.onrender.com)
+ */
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
 async function safeFetch(url, options = {}) {
   try {

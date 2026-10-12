@@ -10,7 +10,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/config")
-@CrossOrigin(origins = "*")
 public class ConfigController {
 
     private final ParkingRateService parkingRateService;

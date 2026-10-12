@@ -6,3 +6,6 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /api/parking/stats
     autoDeploy: true
+    envVars:
+      - key: FRONTEND_URL
+        sync: false

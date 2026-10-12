@@ -34,15 +34,22 @@ class VehicleManagementSystemTests {
     @Autowired
     private com.example.demo.repository.VehicleRepository vehicleRepository;
 
+    @Autowired
+    private org.springframework.web.filter.CorsFilter corsFilter;
+
     private MockMvc authMockMvc;
     private MockMvc parkingMockMvc;
     private MockMvc configMockMvc;
+    private MockMvc corsMockMvc;
 
     @BeforeEach
     void setUp() {
         this.authMockMvc = MockMvcBuilders.standaloneSetup(authController).build();
         this.parkingMockMvc = MockMvcBuilders.standaloneSetup(parkingController).build();
         this.configMockMvc = MockMvcBuilders.standaloneSetup(configController).build();
+        this.corsMockMvc = MockMvcBuilders.standaloneSetup(parkingController)
+                .addFilters(corsFilter)
+                .build();
     }
 
     @Test
@@ -178,5 +185,25 @@ class VehicleManagementSystemTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.totalRevenue").isNumber());
+    }
+
+    @Test
+    void testCorsAllowedForFirebaseAndLocal() throws Exception {
+        // 1. Preflight OPTIONS request from Firebase domain (*.web.app)
+        corsMockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options("/api/parking/stats")
+                        .header("Origin", "https://parksys-app.web.app")
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "Authorization,Content-Type"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Access-Control-Allow-Origin", "https://parksys-app.web.app"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Access-Control-Allow-Credentials", "true"));
+
+        // 2. Preflight OPTIONS request from Local Vite dev server
+        corsMockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options("/api/parking/stats")
+                        .header("Origin", "http://localhost:5173")
+                        .header("Access-Control-Request-Method", "POST"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Access-Control-Allow-Origin", "http://localhost:5173"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Access-Control-Allow-Credentials", "true"));
     }
 }
